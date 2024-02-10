@@ -45,33 +45,40 @@ class UpdateSoc:
         # Alle Autos durchgehen
         for ev in ev_data.values():
             try:
-                if ev.soc_module is not None:
-                    vehicle_update_data = self._get_vehicle_update_data(ev.num)
-                    if (ev.soc_interval_expired(vehicle_update_data) or ev.data.get.force_soc_update):
-                        self._reset_force_soc_update(ev)
-                        if ev.data.get.fault_state == 2:
-                            ev.data.set.soc_error_counter += 1
-                        else:
-                            ev.data.set.soc_error_counter = 0
-                        Pub().pub(f"openWB/set/vehicle/{ev.num}/set/soc_error_counter", ev.data.set.soc_error_counter)
-                        if ev.data.set.soc_error_counter >= 3:
-                            log.debug(
-                                f"EV{ev.num}: Nach dreimaliger erfolgloser SoC-Abfrage wird ein SoC von 0% angenommen.")
-                            Pub().pub(f"openWB/set/vehicle/{ev.num}/get/soc", 0)
-                            Pub().pub(f"openWB/set/vehicle/{ev.num}/get/range", 0)
-                        # Es wird ein Zeitstempel gesetzt, unabhängig ob die Abfrage erfolgreich war, da einige
-                        # Hersteller bei zu häufigen Abfragen Accounts sperren.
-                        Pub().pub(f"openWB/set/vehicle/{ev.num}/get/soc_timestamp", timecheck.create_timestamp())
-                        threads_update.append(Thread(target=ev.soc_module.update,
-                                                     args=(vehicle_update_data,), name=f"fetch soc_ev{ev.num}"))
-                        if hasattr(ev.soc_module, "store"):
-                            threads_store.append(Thread(target=ev.soc_module.store.update,
-                                                        args=(), name=f"store soc_ev{ev.num}"))
-                else:
+                if ev.soc_module is None:
                     # Wenn kein Modul konfiguriert ist, Fehlerstatus zurücksetzen.
                     if ev.data.get.fault_state != 0 or ev.data.get.fault_str != NO_ERROR:
                         Pub().pub(f"openWB/set/vehicle/{ev.num}/get/fault_state", 0)
                         Pub().pub(f"openWB/set/vehicle/{ev.num}/get/fault_str", NO_ERROR)
+                    continue
+                    
+                vehicle_update_data = self._get_vehicle_update_data(ev.num)
+                
+                if (ev.soc_interval_expired(vehicle_update_data) or ev.data.get.force_soc_update):
+                    self._reset_force_soc_update(ev)
+                    
+                    if ev.data.get.fault_state == 2:
+                        ev.data.set.soc_error_counter += 1
+                    else:
+                        ev.data.set.soc_error_counter = 0
+                        
+                    Pub().pub(f"openWB/set/vehicle/{ev.num}/set/soc_error_counter", ev.data.set.soc_error_counter)
+                    
+                    if ev.data.set.soc_error_counter >= 3:
+                        log.debug(
+                            f"EV{ev.num}: Nach dreimaliger erfolgloser SoC-Abfrage wird ein SoC von 0% angenommen."
+                        )
+                        Pub().pub(f"openWB/set/vehicle/{ev.num}/get/soc", 0)
+                        Pub().pub(f"openWB/set/vehicle/{ev.num}/get/range", 0)
+                        # Es wird ein Zeitstempel gesetzt, unabhängig ob die Abfrage erfolgreich war, da einige
+                        # Hersteller bei zu häufigen Abfragen Accounts sperren.
+                    Pub().pub(f"openWB/set/vehicle/{ev.num}/get/soc_timestamp", timecheck.create_timestamp())
+                    threads_update.append(Thread(target=ev.soc_module.update,
+                                                     args=(vehicle_update_data,), name=f"fetch soc_ev{ev.num}"))
+                    
+                    if hasattr(ev.soc_module, "store"):
+                        threads_store.append(Thread(target=ev.soc_module.store.update,
+                                                        args=(), name=f"store soc_ev{ev.num}"))
             except Exception:
                 log.exception("Fehler im update_soc-Modul")
         return threads_update, threads_store
@@ -84,14 +91,17 @@ class UpdateSoc:
     def _get_vehicle_update_data(self, ev_num: int) -> VehicleUpdateData:
         ev = subdata.SubData.ev_data[f"ev{ev_num}"]
         ev_template = subdata.SubData.ev_template_data[f"et{ev.data.ev_template}"]
+        
         for cp_state_update in list(subdata.SubData.cp_data.values()):
             cp = cp_state_update.chargepoint
+            
             if cp.data.set.charging_ev == ev_num or cp.data.set.charging_ev_prev == ev_num:
                 plug_state = cp.data.get.plug_state
                 charge_state = cp.data.get.charge_state
                 imported = cp.data.get.imported
                 battery_capacity = ev_template.data.battery_capacity
                 efficiency = ev_template.data.efficiency
+                
                 if ev.soc_module.general_config.use_soc_from_cp:
                     soc_from_cp = cp.data.get.soc
                     timestamp_soc_from_cp = cp.data.get.soc_timestamp
@@ -107,6 +117,7 @@ class UpdateSoc:
             efficiency = ev_template.data.efficiency
             soc_from_cp = None
             timestamp_soc_from_cp = None
+            
         return VehicleUpdateData(plug_state=plug_state,
                                  charge_state=charge_state,
                                  efficiency=efficiency,
